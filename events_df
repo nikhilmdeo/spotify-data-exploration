@@ -1,73 +1,165 @@
 import pandas as pd
 import numpy as np
-import random
 from faker import Faker
-from datetime import datetime, timedelta
+from datetime import datetime
 
 faker = Faker()
 np.random.seed(42)
-random.seed(42)
 
-# Parameters
+# ------------------ USERS ------------------
+num_users = 100_000
+
+countries = ['US', 'IN', 'DE', 'BR', 'UK', 'CA', 'AU', 'FR']
+channels = ['Organic', 'Paid Ads', 'Referral']
+subs = ['Free', 'Premium', 'Family']
+genres = ['Pop', 'Rock', 'Jazz', 'Classical', 'Hip-Hop', 'Electronic']
+
+country_probs = [0.26, 0.19, 0.14, 0.11, 0.09, 0.08, 0.07, 0.06]
+channel_probs = [0.37, 0.23, 0.40]
+subs_probs = [0.41, 0.17, 0.42]
+
+users = pd.DataFrame({
+    'user_id': np.arange(1, num_users + 1),
+    'signup_date': [faker.date_between(start_date='-5y', end_date='today') for _ in range(num_users)],
+    'age': np.random.randint(18, 65, num_users),
+    'gender': np.random.choice(['Male', 'Female', 'Nonbinary', 'Other'], num_users, p=[0.47, 0.47, 0.05, 0.01]),
+    'country': np.random.choice(countries, num_users, p=country_probs),
+    'acquisition_channel': np.random.choice(channels, num_users, p=channel_probs),
+    'subscription_type': np.random.choice(subs, num_users, p=subs_probs),
+})
+
+# Churn adjustments to create realistic skew
+country_churn_adj = {'US': -0.05, 'IN': 0.1, 'DE': 0.02, 'BR': 0.1, 'UK': -0.03, 'CA': -0.02, 'AU': -0.01, 'FR': 0.02}
+channel_churn_adj = {'Paid Ads': 0.15, 'Organic': -0.05, 'Referral': -0.1}
+subs_base_churn = {'Free': 0.6, 'Premium': 0.3, 'Family': 0.15}
+
+users['churn_risk_score'] = (
+    users['subscription_type'].map(subs_base_churn)
+    + users['acquisition_channel'].map(channel_churn_adj)
+    + users['country'].map(country_churn_adj)
+    - np.random.normal(0, 0.1, num_users)
+)
+users['churn_risk_score'] = np.clip(users['churn_risk_score'], 0, 1)
+
+# Sessions skew
+users['num_sessions_last_30d'] = (
+    np.random.poisson(8, num_users)
+    + users['subscription_type'].map({'Free': -2, 'Premium': 3, 'Family': 5})
+    + users['acquisition_channel'].map({'Paid Ads': -1, 'Organic': 1, 'Referral': 3})
+)
+users['num_sessions_last_30d'] = users['num_sessions_last_30d'].clip(lower=0)
+
+# Tracks played
+users['num_tracks_played_last_30d'] = users['num_sessions_last_30d'] * np.random.randint(3, 12)
+
+# Lifetime value skew
+users['lifetime_value'] = (
+    users['subscription_type'].map({'Free': 0, 'Premium': 150, 'Family': 220})
+    + users['acquisition_channel'].map({'Paid Ads': 20, 'Organic': 10, 'Referral': 40})
+    + users['country'].map({'US': 50, 'IN': -20, 'DE': 10, 'BR': -15, 'UK': 30, 'CA': 20, 'AU': 20, 'FR': 5})
+    + np.random.normal(0, 30, num_users)
+)
+users['lifetime_value'] = users['lifetime_value'].clip(lower=0)
+
+# Some anomalies to churn
+users['is_active'] = np.where((users['churn_risk_score'] > 0.7) & (np.random.rand(num_users) > 0.3), False, True)
+users['num_playlists'] = np.where(users['subscription_type'] == 'Free', np.random.poisson(1, num_users), np.random.poisson(4, num_users))
+users['favorite_genre'] = np.random.choice(genres, num_users)
+
+users.to_csv('users_final.csv', index=False)
+
+# ------------------ ARTISTS ------------------
+num_artists = 5000
+artist_genre_probs = [0.24, 0.21, 0.09, 0.05, 0.28, 0.13]
+artist_countries = ['US', 'UK', 'DE', 'FR', 'CA', 'AU']
+languages = ['English', 'German', 'French', 'Portuguese', 'Hindi', 'Spanish']
+
+artists = pd.DataFrame({
+    'artist_id': np.arange(1, num_artists + 1),
+    'name': [faker.name() for _ in range(num_artists)],
+    'genre': np.random.choice(genres, num_artists, p=artist_genre_probs),
+    'country': np.random.choice(artist_countries, num_artists, p=[0.4, 0.2, 0.1, 0.1, 0.1, 0.1]),
+    'monthly_listeners': np.random.randint(10_000, 5_000_000, num_artists),
+    'total_streams': np.random.randint(100_000, 2_000_000_000, num_artists),
+    'is_independent': np.random.choice([True, False], num_artists, p=[0.4, 0.6]),
+    'primary_language': np.random.choice(languages, num_artists, p=[0.6, 0.05, 0.05, 0.05, 0.15, 0.1]),
+    'social_media_followers': np.random.randint(5000, 10_000_000, num_artists),
+    'brand_collaboration_score': np.random.beta(2, 5, num_artists) * 100,
+    'global_reach_score': np.random.beta(2, 5, num_artists) * 100,
+    'fan_loyalty_index': np.random.beta(5, 2, num_artists) * 100,
+})
+
+artists.to_csv('artists_final.csv', index=False)
+
+# ------------------ TRACKS ------------------
+num_tracks = 50000
+albums = ['Eclipse', 'Neon Dreams', 'Retro Waves', 'Future Sounds', 'Starlight', 'Moonlight Serenade', 'Urban Vibes']
+
+tracks = pd.DataFrame({
+    'track_id': np.arange(1, num_tracks + 1),
+    'artist_id': np.random.randint(1, num_artists + 1, num_tracks),
+    'title': [faker.sentence(nb_words=3).replace('.', '') for _ in range(num_tracks)],
+    'album': np.random.choice(albums, num_tracks),
+    'genre': np.random.choice(genres, num_tracks, p=artist_genre_probs),
+    'duration_sec': np.random.randint(90, 420, num_tracks),
+    'release_date': [faker.date_between(start_date='-10y', end_date='today') for _ in range(num_tracks)],
+    'explicit': np.random.choice([True, False], num_tracks, p=[0.3, 0.7]),
+    'popularity_score': np.random.beta(2, 5, num_tracks) * 100,
+    'num_global_streams': np.random.randint(1000, 1_000_000_000, num_tracks),
+    'num_playlists_included': np.random.randint(0, 5000, num_tracks),
+    'is_collaboration': np.random.choice([True, False], num_tracks, p=[0.2, 0.8]),
+    'days_to_1m_streams': np.random.randint(1, 365, num_tracks),
+    'release_season': np.random.choice(['Winter', 'Spring', 'Summer', 'Fall'], num_tracks),
+    'acousticness': np.random.beta(2, 5, num_tracks),
+    'danceability': np.random.beta(2, 2, num_tracks),
+    'energy': np.random.beta(2, 2, num_tracks),
+    'valence': np.random.beta(2, 2, num_tracks),
+    'instrumentalness': np.random.beta(2, 5, num_tracks),
+    'speechiness': np.random.beta(2, 5, num_tracks),
+    'liveness': np.random.beta(2, 5, num_tracks),
+    'tempo': np.random.normal(120, 20, num_tracks).clip(60, 200),
+    'mode': np.random.choice(['Major', 'Minor'], num_tracks, p=[0.7, 0.3]),
+})
+
+tracks.to_csv('tracks_final.csv', index=False)
+
+# ------------------ EVENTS ------------------
 num_events = 1_500_000
-user_ids = list(range(1, 20_001))         # Assuming 20,000 users
-track_ids = list(range(1, 10_001))        # Assuming 10,000 tracks
-playlist_ids = list(range(1, 5_001))      # Assuming up to 5,000 playlists
-
-device_types = ["iOS", "Android", "Web"]
-network_types = ["WiFi", "4G", "5G"]
-app_versions = ["5.6.1", "5.7.0", "6.0.0", "6.1.2"]
-countries = ["US", "CA", "GB", "DE", "FR", "IN", "BR", "AU"]
-share_destinations = ["WhatsApp", "Instagram", "Facebook", "Twitter", "Snapchat", "Email"]
-
-# Core event types (balanced, practical set)
 event_types = [
-    "play_track", "pause_track", "resume_track", "skip_track", "like_track", "repeat_track", "seek_track",
-    "create_playlist", "add_to_playlist", "remove_from_playlist", "follow_artist", "unfollow_artist",
-    "follow_user", "unfollow_user", "search", "view_artist_page", "view_album_page", "view_playlist_page",
-    "start_radio", "share_track", "share_playlist", "upgrade_subscription", "downgrade_subscription",
-    "cancel_subscription", "view_ad", "click_ad", "purchase_merch"
+    'play_track', 'pause_track', 'resume_track', 'skip_track', 'like_track', 'dislike_track', 'repeat_track', 'shuffle_play', 'seek_track',
+    'create_playlist', 'delete_playlist', 'add_to_playlist', 'remove_from_playlist', 'reorder_playlist_tracks',
+    'share_playlist', 'follow_playlist', 'unfollow_playlist',
+    'follow_artist', 'unfollow_artist', 'follow_user', 'unfollow_user',
+    'update_profile', 'upgrade_subscription', 'downgrade_subscription', 'cancel_subscription', 'reactivate_subscription',
+    'search', 'browse_genre', 'view_artist_page', 'view_album_page', 'view_track_page', 'view_playlist_page', 'view_podcast_page', 'start_radio',
+    'play_podcast_episode', 'pause_podcast_episode', 'seek_podcast_episode', 'download_podcast_episode', 'subscribe_podcast', 'unsubscribe_podcast',
+    'share_track', 'share_album', 'share_artist', 'share_playlist', 'share_podcast',
+    'view_ad', 'click_ad', 'skip_ad', 'complete_ad', 'purchase_merch',
+    'login', 'logout', 'install_app', 'update_app', 'rate_app', 'submit_feedback', 'enable_notifications', 'disable_notifications'
 ]
+device_probs = [0.41, 0.38, 0.21]
 
-events = []
+events = pd.DataFrame({
+    'event_id': np.arange(1, num_events + 1),
+    'user_id': np.random.randint(1, num_users + 1, num_events),
+    'event_type': np.random.choice(event_types, num_events),
+    'event_timestamp': [faker.date_time_between(start_date='-3y', end_date='now') for _ in range(num_events)],
+    'track_id': np.where(np.random.rand(num_events) < 0.6, np.random.randint(1, num_tracks + 1, num_events), np.nan),
+    'device_type': np.random.choice(['iOS', 'Android', 'Web'], num_events, p=device_probs),
+    'app_version': np.random.choice(['1.0', '1.1', '2.0', '2.1'], num_events, p=[0.2, 0.3, 0.3, 0.2]),
+    'network_type': np.random.choice(['WiFi', '4G', '5G'], num_events, p=[0.6, 0.3, 0.1]),
+    'location_country': np.random.choice(countries, num_events, p=country_probs),
+    'session_id': np.random.randint(10000, 999999, num_events).astype(str),
+    'search_query': np.where(np.random.rand(num_events) < 0.1, [faker.word() for _ in range(num_events)], np.nan),
+    'playlist_id': np.where(np.random.rand(num_events) < 0.2, np.random.randint(1, 50_000, num_events), np.nan),
+    'share_destination': np.where(np.random.rand(num_events) < 0.05, np.random.choice(['WhatsApp', 'Facebook', 'Twitter'], num_events), np.nan),
+    'duration_sec': np.where(np.random.rand(num_events) < 0.5, np.random.randint(30, 300, num_events), np.nan),
+})
 
-for eid in range(1, num_events + 1):
-    user_id = random.choice(user_ids)
-    event_type = random.choices(event_types, weights=[
-        25, 5, 5, 10, 10, 3, 3, 
-        2, 5, 3, 3, 1, 
-        2, 1, 20, 5, 4, 3,
-        2, 3, 3, 1, 1, 
-        5, 3, 1
-    ], k=1)[0]
+events['event_year'] = events['event_timestamp'].apply(lambda x: x.year)
 
-    event_timestamp = faker.date_time_between(start_date='-1y', end_date='now')
-    track_id = random.choice(track_ids) if "track" in event_type or event_type in ["like_track", "skip_track", "share_track", "play_track", "pause_track", "resume_track", "seek_track", "repeat_track"] else None
-    playlist_id = random.choice(playlist_ids) if "playlist" in event_type else None
-    search_query = faker.word() if event_type == "search" else None
-    share_dest = random.choice(share_destinations) if "share" in event_type else None
-    duration_sec = random.randint(5, 300) if event_type in ["play_track", "pause_track", "resume_track", "seek_track"] else None
-    session_id = f"sess_{random.randint(1, 500_000)}"
+for year in events['event_year'].unique():
+    df_year = events[events['event_year'] == year]
+    df_year.to_csv(f'events_final_{year}.csv', index=False)
 
-    events.append({
-        "event_id": eid,
-        "user_id": user_id,
-        "event_type": event_type,
-        "event_timestamp": event_timestamp,
-        "track_id": track_id,
-        "device_type": random.choice(device_types),
-        "app_version": random.choice(app_versions),
-        "network_type": random.choice(network_types),
-        "location_country": random.choice(countries),
-        "session_id": session_id,
-        "search_query": search_query,
-        "playlist_id": playlist_id,
-        "share_destination": share_dest,
-        "duration_sec": duration_sec
-    })
-
-# Convert to DataFrame and export
-df_events = pd.DataFrame(events)
-df_events.to_csv("events_v1_5m.csv", index=False)
-
-print("✅ events_v1_5m.csv created with", len(df_events), "rows.")
+print("✅ All CSVs saved! Users, artists, tracks, events (partitioned by year).")
